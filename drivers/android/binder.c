@@ -403,11 +403,35 @@ struct binder_transaction {
 static void
 binder_defer_work(struct binder_proc *proc, enum binder_deferred_state defer);
 
+/* V521DBG: count how many descriptors are actually open in a files_struct */
+static unsigned int v521dbg_fdcount(struct files_struct *files)
+{
+	struct fdtable *fdt;
+	unsigned int nr = 0;
+	unsigned int i;
+
+	if (files == NULL)
+		return 0xffffffff;
+
+	spin_lock(&files->file_lock);
+	fdt = files_fdtable(files);
+	for (i = 0; i < fdt->max_fds; i++) {
+		if (test_bit(i, fdt->open_fds))
+			nr++;
+	}
+	spin_unlock(&files->file_lock);
+	return nr;
+}
+
 static int task_get_unused_fd_flags(struct binder_proc *proc, int flags)
 {
 	struct files_struct *files = proc->files;
 	unsigned long rlim_cur;
 	unsigned long irqs;
+	struct fdtable *fdt;
+	unsigned int max_fds = 0;
+	int next_fd = -1;
+	int ret;
 
 	if (files == NULL)
 		return -ESRCH;
@@ -418,7 +442,24 @@ static int task_get_unused_fd_flags(struct binder_proc *proc, int flags)
 	rlim_cur = task_rlimit(proc->tsk, RLIMIT_NOFILE);
 	unlock_task_sighand(proc->tsk, &irqs);
 
-	return __alloc_fd(files, 0, rlim_cur, flags);
+	spin_lock(&files->file_lock);
+	fdt = files_fdtable(files);
+	max_fds = fdt->max_fds;
+	next_fd = files->next_fd;
+	spin_unlock(&files->file_lock);
+
+	ret = __alloc_fd(files, 0, rlim_cur, flags);
+
+	/* V521DBG: only talk when it went wrong, the success path is far
+	 * too chatty and rolls the dmesg ring buffer over.
+	 */
+	if (ret < 0)
+		pr_err("V521DBG tgufd_fail: proc_pid=%d tsk_pid=%d comm=%s files=%p tsk_files=%p tsk_files_nr=%u next_fd=%d max_fds=%u nr_open=%u rlim_cur=%lu ret=%d\n",
+		       proc->pid, proc->tsk->pid, proc->tsk->comm, files,
+		       proc->tsk->files, v521dbg_fdcount(proc->tsk->files),
+		       next_fd, max_fds, v521dbg_fdcount(files), rlim_cur, ret);
+
+	return ret;
 }
 
 /*
@@ -613,6 +654,9 @@ static int binder_update_page_range(struct binder_proc *proc, int allocate,
 	if (vma == NULL) {
 		pr_err_ratelimited("%d: binder_alloc_buf failed to map pages in userspace, no vma\n",
 			proc->pid);
+		pr_err("V521DBG upd_page_range no vma: pid=%d ctx=%s proc=%p mm=%p vma=%p vma_vm_mm=%p comm=%s\n",
+		       proc->pid, proc->context->name, proc, mm, proc->vma,
+		       proc->vma_vm_mm, current->comm);
 		goto err_no_vma;
 	}
 
@@ -693,6 +737,10 @@ static struct binder_buffer *binder_alloc_buf(struct binder_proc *proc,
 	if (proc->vma == NULL) {
 		pr_err("%d: binder_alloc_buf, no vma\n",
 		       proc->pid);
+		pr_err("V521DBG alloc_buf no vma: pid=%d ctx=%s proc=%p buffer=%p bufsize=%zu pages=%p tsk=%d comm=%s\n",
+		       proc->pid, proc->context->name, proc, proc->buffer,
+		       proc->buffer_size, proc->pages, proc->tsk ? proc->tsk->pid : -1,
+		       current->comm);
 		return NULL;
 	}
 
@@ -1552,7 +1600,7 @@ static void binder_transaction_buffer_release(struct binder_proc *proc,
 				       debug_id, (u64)fda->num_fds);
 				continue;
 			}
-			fd_array = (u32 *)(parent_buffer + fda->parent_offset);
+			fd_array = (u32 *)(parent_buffer + (uintptr_t)fda->parent_offset);
 			for (fd_index = 0; fd_index < fda->num_fds; fd_index++)
 				task_close_fd(proc, fd_array[fd_index]);
 		} break;
@@ -1701,12 +1749,22 @@ static int binder_translate_fd(int fd,
 	}
 	ret = security_binder_transfer_file(proc->tsk, target_proc->tsk, file);
 	if (ret < 0) {
+		binder_user_error("V521DBG %d:%d fd %d: security_binder_transfer_file to %d denied (%d)\n",
+				  proc->pid, thread->pid, fd, target_proc->pid, ret);
 		ret = -EPERM;
 		goto err_security;
 	}
 
 	target_fd = task_get_unused_fd_flags(target_proc, O_CLOEXEC);
 	if (target_fd < 0) {
+		binder_user_error("V521DBG %d:%d fd %d: no unused fd in target %d (%d) files=%p\n",
+				  proc->pid, thread->pid, fd, target_proc->pid, target_fd, target_proc->files);
+		pr_err("V521DBG xlate_fail: target_pid=%d target_tsk_pid=%d target_comm=%s proc_files=%p tsk_files=%p tsk_sighand=%p tsk_nr=%u proc_nr=%u err=%d\n",
+		       target_proc->pid, target_proc->tsk->pid, target_proc->tsk->comm,
+		       target_proc->files, target_proc->tsk->files,
+		       target_proc->tsk->sighand,
+		       v521dbg_fdcount(target_proc->tsk->files),
+		       v521dbg_fdcount(target_proc->files), target_fd);
 		ret = -ENOMEM;
 		goto err_get_unused_fd;
 	}
@@ -1756,7 +1814,7 @@ static int binder_translate_fd_array(struct binder_fd_array_object *fda,
 	 * back to the kernel address space to access it
 	 */
 	parent_buffer = parent->buffer - target_proc->user_buffer_offset;
-	fd_array = (u32 *)(parent_buffer + fda->parent_offset);
+	fd_array = (u32 *)(parent_buffer + (uintptr_t)fda->parent_offset);
 	if (!IS_ALIGNED((unsigned long)fd_array, sizeof(u32))) {
 		binder_user_error("%d:%d parent offset not aligned correctly.\n",
 				  proc->pid, thread->pid);
@@ -1822,7 +1880,7 @@ static int binder_fixup_parent(struct binder_transaction *t,
 				  proc->pid, thread->pid);
 		return -EINVAL;
 	}
-	parent_buffer = (u8 *)(parent->buffer -
+	parent_buffer = (u8 *)(uintptr_t)(parent->buffer -
 			       target_proc->user_buffer_offset);
 	*(binder_uintptr_t *)(parent_buffer + bp->parent_offset) = bp->buffer;
 
@@ -2600,7 +2658,7 @@ int binder_thread_write(struct binder_proc *proc,
 			if (get_user(cookie, (binder_uintptr_t __user *)ptr))
 				return -EFAULT;
 
-			ptr += sizeof(void *);
+			ptr += sizeof(cookie); /* v521: was sizeof(void *), wrong with 64-bit binder on 32-bit */
 			list_for_each_entry(w, &proc->delivered_death, entry) {
 				struct binder_ref_death *tmp_death = container_of(w, struct binder_ref_death, work);
 
@@ -3346,6 +3404,10 @@ static void binder_vma_close(struct vm_area_struct *vma)
 {
 	struct binder_proc *proc = vma->vm_private_data;
 
+	pr_err("V521DBG binder_vma_close: pid=%d ctx=%s proc=%p vma=%p %lx-%lx proc_vma=%p tsk=%d comm=%s\n",
+	       proc->pid, proc->context->name, proc, vma, vma->vm_start,
+	       vma->vm_end, proc->vma, proc->tsk ? proc->tsk->pid : -1,
+	       current->comm);
 	binder_debug(BINDER_DEBUG_OPEN_CLOSE,
 		     "%d close vm area %lx-%lx (%ld K) vma %lx pagep %lx\n",
 		     proc->pid, vma->vm_start, vma->vm_end,
@@ -3375,7 +3437,10 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	const char *failure_string;
 	struct binder_buffer *buffer;
 
-	if (proc->tsk != current)
+	/* V521: must have been opened by the same *process* that is mmap'ing
+	 * (proc->tsk is the group leader, see binder_open()).
+	 */
+	if (proc->tsk != current->group_leader)
 		return -EINVAL;
 
 	if ((vma->vm_end - vma->vm_start) > SZ_4M)
@@ -3446,6 +3511,11 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	proc->vma = vma;
 	proc->vma_vm_mm = vma->vm_mm;
 
+	pr_err("V521DBG binder_mmap: pid=%d ctx=%s proc=%p vma=%p %lx-%lx buffer=%p bufsize=%zu pages=%p files=%p nr=%u\n",
+	       proc->pid, proc->context->name, proc, vma, vma->vm_start,
+	       vma->vm_end, proc->buffer, proc->buffer_size, proc->pages,
+	       proc->files, v521dbg_fdcount(proc->files));
+
 	/*pr_info("binder_mmap: %d %lx-%lx maps %pK\n",
 		 proc->pid, vma->vm_start, vma->vm_end, proc->buffer);*/
 	return 0;
@@ -3477,8 +3547,21 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	proc = kzalloc(sizeof(*proc), GFP_KERNEL);
 	if (proc == NULL)
 		return -ENOMEM;
-	get_task_struct(current);
-	proc->tsk = current;
+	/*
+	 * V521: keep a reference to the *group leader*, not to the thread
+	 * that happened to open the driver.  The thread that opens
+	 * /dev/binder or /dev/hwbinder can die while the process lives on
+	 * (e.g. a short-lived NDK MediaCodec thread), and
+	 * exit_signals() clears tsk->sighand for every exiting thread.
+	 * binder_translate_fd() -> task_get_unused_fd_flags() then does
+	 * lock_task_sighand(proc->tsk) which returns NULL for a task
+	 * whose sighand was cleared, and the fd transfer fails with
+	 * -EMFILE forever.  This is what killed the SystemUI/Recents
+	 * graphic-buffer allocations.  Upstream AOSP uses
+	 * current->group_leader here as well.
+	 */
+	get_task_struct(current->group_leader);
+	proc->tsk = current->group_leader;
 	INIT_LIST_HEAD(&proc->todo);
 	init_waitqueue_head(&proc->wait);
 	proc->default_priority = task_nice(current);
@@ -3493,6 +3576,10 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	proc->pid = current->group_leader->pid;
 	INIT_LIST_HEAD(&proc->delivered_death);
 	filp->private_data = proc;
+
+	pr_err("V521DBG binder_open: pid=%d tid=%d comm=%s ctx=%s proc=%p files=%p nr=%u\n",
+	       proc->pid, current->pid, current->comm, proc->context->name,
+	       proc, current->files, v521dbg_fdcount(current->files));
 
 	binder_unlock(__func__);
 
