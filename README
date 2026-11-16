@@ -36,6 +36,23 @@ target process when the descriptor allocation fails, which was the only way
 to tell the "too many open files" case apart from the "the task is already
 dying" case while bringing the data connection up.
 
+  c6825292  clk: msm8952: add the IR carrier rates to the SPI clock of
+            BLSP2 QUP2
+
+The consumer IR transmitter of the V521 (drivers/misc/spi_ir.c) sends one
+16 bit word per carrier period and passes the carrier frequency itself as
+the speed of the SPI transfer.  The stock LG kernel makes that work in the
+clock table: the entry named 38000 programs the clock to
+800 MHz / 12 / 97 = 687285 Hz, which is 18 SPI bit times per carrier
+period.  This tree only had the seven regular SPI rates, so the request was
+refused ("no match found for requested clock frequency:38000"), the clock
+stayed where it was and an IR frame left the LED some forty times too
+fast.
+
+The commit adds the 84 entries below 960 kHz of the stock V521 kernel, read
+out of its clk_freq_tbl, in a table of their own that only the IR bus
+(BLSP2 QUP2, spi@7af6000) uses.
+
 
         Linux kernel release 3.x <http://kernel.org/>
 
