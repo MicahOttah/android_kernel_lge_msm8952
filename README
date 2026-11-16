@@ -1,57 +1,16 @@
 LG G Pad X 8.0 (V521) - LineageOS 15.1
 =====================================
 
-This is the fork of the LG kernel tree for the **LG G Pad X 8.0 (V521)**
-(Qualcomm MSM8952 / Snapdragon 625) that the **LineageOS 15.1** port uses.
+Fork of the LG msm8952 3.10 kernel for the V521 port (branch
+lineage-15.1-v521).  Port and device tree:
+https://github.com/MicahOttah/android_device_lge_v521
 
-  Branch              lineage-15.1-v521
-  Device tree         https://github.com/MicahOttah/android_device_lge_v521
-  Kernel version      3.10
+Changes:
 
-What is different on lineage-15.1-v521
---------------------------------------
-
-  55a07099  v521: add the 64 bit get_user path and drop the 32 bit binder
-            API
-
-The 32-bit userspace of this device talks to the 64-bit kernel through the
-binder, and the CAF blob that carries the data connection hands 64-bit
-sizes and pointers to the kernel.  The arm32 __get_user implementation of
-this tree only knows about 1, 2 and 4 byte copies, so an 8-byte
-copy_from_user() silently truncated the value to 32 bit.
-
-The commit backports the upstream arm implementation of the 8-byte variant
-(__get_user_8 plus the __get_user_xb helper for the big endian case, which
-has to narrow the double word load into a single register) and teaches
-__get_user_check() about the 8-byte case.
-
-The binder has to be built without ANDROID_BINDER_IPC_32BIT for the same
-reason: the option makes the kernel use the Android 4.4 binder ABI, which
-cannot carry the 64-bit payloads the CAF radio and CNE blobs use.  The
-option was also hidden, so it could not be turned off at all - it is now a
-visible bool that defaults to the old behaviour on 32-bit systems.
-
-The binder change also prints the state of the file descriptor table of the
-target process when the descriptor allocation fails, which was the only way
-to tell the "too many open files" case apart from the "the task is already
-dying" case while bringing the data connection up.
-
-  c6825292  clk: msm8952: add the IR carrier rates to the SPI clock of
-            BLSP2 QUP2
-
-The consumer IR transmitter of the V521 (drivers/misc/spi_ir.c) sends one
-16 bit word per carrier period and passes the carrier frequency itself as
-the speed of the SPI transfer.  The stock LG kernel makes that work in the
-clock table: the entry named 38000 programs the clock to
-800 MHz / 12 / 97 = 687285 Hz, which is 18 SPI bit times per carrier
-period.  This tree only had the seven regular SPI rates, so the request was
-refused ("no match found for requested clock frequency:38000"), the clock
-stayed where it was and an IR frame left the LED some forty times too
-fast.
-
-The commit adds the 84 entries below 960 kHz of the stock V521 kernel, read
-out of its clk_freq_tbl, in a table of their own that only the IR bus
-(BLSP2 QUP2, spi@7af6000) uses.
+* 64-bit binder ABI on this 32-bit kernel (ANDROID_BINDER_IPC_32BIT off,
+  as Android 8 HIDL needs), with the 8-byte __get_user backported for it.
+* IR carrier rates in the SPI clock table of the IR bus (BLSP2 QUP2),
+  taken from the stock kernel, so the IR LED transmits at the right speed.
 
 
         Linux kernel release 3.x <http://kernel.org/>
