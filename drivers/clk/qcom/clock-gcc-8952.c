@@ -958,10 +958,127 @@ static struct rcg_clk blsp2_qup2_i2c_apps_clk_src = {
 	},
 };
 
+/*
+ * The SPI clock of BLSP2 QUP2, the bus of the LGE "sdc_spi_ir" consumer
+ * infrared transmitter of the V521 (drivers/misc/spi_ir.c).
+ *
+ * The IR driver sends one 16 bit word per carrier period and the QUP adds
+ * two idle bit times between words, so one carrier period is 18 SPI bit
+ * times and the SPI clock has to run at 18 times the carrier frequency.
+ * The driver does not ask for that rate, though: it passes the carrier
+ * frequency itself as the speed of the transfer (38000 for a 38 kHz
+ * remote).  The stock LG kernel resolves this in the clock table - the
+ * entry *named* 38000 programs the RCG to 800 MHz / 12 / 97 = 687285 Hz,
+ * which is a carrier of 38182 Hz.
+ *
+ * Without these entries msm_spi_clock_set() logs "no match found for
+ * requested clock frequency:38000", leaves the clock at the rate of the
+ * previous transfer and the whole IR frame leaves the LED some forty times
+ * too fast: nothing a receiver could decode and nothing a camera can see.
+ *
+ * The entries below 960000 are the ones of the stock V521 kernel
+ * (build NRD90U), read out of its clk_freq_tbl; the rest is the regular
+ * table.
+ */
+static struct clk_freq_tbl ftbl_gcc_blsp2_qup2_spi_apps_clk[] = {
+	F( 26000,	gpll0,	16,	1,	107),
+	F( 26500,	gpll0,	16,	1,	105),
+	F( 27000,	gpll0,	16,	1,	103),
+	F( 27500,	gpll0,	16,	1,	101),
+	F( 28000,	gpll0,	16,	1,	99),
+	F( 28500,	gpll0,	16,	1,	97),
+	F( 29000,	gpll0,	16,	1,	96),
+	F( 29500,	gpll0,	16,	1,	94),
+	F( 30000,	gpll0,	16,	1,	93),
+	F( 30300,	gpll0,	12,	1,	122),
+	F( 30500,	gpll0,	12,	1,	121),
+	F( 30750,	gpll0,	12,	1,	120),
+	F( 31000,	gpll0,	12,	1,	119),
+	F( 31250,	gpll0,	12,	1,	119),
+	F( 31500,	gpll0,	12,	1,	118),
+	F( 31750,	gpll0,	12,	1,	117),
+	F( 32000,	gpll0,	12,	1,	116),
+	F( 32250,	gpll0,	12,	1,	115),
+	F( 32500,	gpll0,	12,	1,	114),
+	F( 32750,	gpll0,	12,	1,	113),
+	F( 33000,	gpll0,	12,	1,	112),
+	F( 33250,	gpll0,	12,	1,	111),
+	F( 33500,	gpll0,	12,	1,	111),
+	F( 33750,	gpll0,	12,	1,	110),
+	F( 34000,	gpll0,	12,	1,	109),
+	F( 34250,	gpll0,	12,	1,	108),
+	F( 34500,	gpll0,	12,	1,	107),
+	F( 34750,	gpll0,	12,	1,	107),
+	F( 35000,	gpll0,	12,	1,	106),
+	F( 35250,	gpll0,	12,	1,	105),
+	F( 35500,	gpll0,	12,	1,	104),
+	F( 35750,	gpll0,	12,	1,	104),
+	F( 36000,	gpll0,	12,	1,	103),
+	F( 36250,	gpll0,	12,	1,	102),
+	F( 36500,	gpll0,	12,	1,	101),
+	F( 36750,	gpll0,	12,	1,	101),
+	F( 37000,	gpll0,	12,	1,	100),
+	F( 37250,	gpll0,	12,	1,	99),
+	F( 37500,	gpll0,	12,	1,	99),
+	F( 37750,	gpll0,	12,	1,	98),
+	F( 38000,	gpll0,	12,	1,	97),
+	F( 38250,	gpll0,	12,	1,	97),
+	F( 38500,	gpll0,	12,	1,	96),
+	F( 38750,	gpll0,	12,	1,	96),
+	F( 39000,	gpll0,	12,	1,	95),
+	F( 39250,	gpll0,	12,	1,	94),
+	F( 39500,	gpll0,	12,	1,	94),
+	F( 39750,	gpll0,	12,	1,	93),
+	F( 40000,	gpll0,	8,	1,	139),
+	F( 40500,	gpll0,	8,	1,	137),
+	F( 41000,	gpll0,	8,	1,	135),
+	F( 41500,	gpll0,	8,	1,	134),
+	F( 42000,	gpll0,	8,	1,	132),
+	F( 42500,	gpll0,	8,	1,	131),
+	F( 43000,	gpll0,	8,	1,	129),
+	F( 43500,	gpll0,	8,	1,	128),
+	F( 44000,	gpll0,	8,	1,	126),
+	F( 44500,	gpll0,	8,	1,	125),
+	F( 45000,	gpll0,	8,	1,	123),
+	F( 45500,	gpll0,	8,	1,	122),
+	F( 46000,	gpll0,	8,	1,	121),
+	F( 46500,	gpll0,	8,	1,	119),
+	F( 47000,	gpll0,	8,	1,	118),
+	F( 47500,	gpll0,	8,	1,	117),
+	F( 48000,	gpll0,	8,	1,	116),
+	F( 48500,	gpll0,	8,	1,	115),
+	F( 49000,	gpll0,	8,	1,	113),
+	F( 49500,	gpll0,	8,	1,	112),
+	F( 50000,	gpll0,	8,	1,	111),
+	F( 50500,	gpll0,	8,	1,	110),
+	F( 51000,	gpll0,	8,	1,	109),
+	F( 51500,	gpll0,	8,	1,	108),
+	F( 52000,	gpll0,	8,	1,	107),
+	F( 52500,	gpll0,	8,	1,	106),
+	F( 53000,	gpll0,	8,	1,	105),
+	F( 53500,	gpll0,	8,	1,	104),
+	F( 54000,	gpll0,	8,	1,	103),
+	F( 54500,	gpll0,	8,	1,	102),
+	F( 55000,	gpll0,	8,	1,	101),
+	F( 55500,	gpll0,	8,	1,	100),
+	F( 56000,	gpll0,	8,	1,	99),
+	F( 76000,	xo,	16,	3,	47),
+	F( 676000,	gpll0,	12,	1,	74),
+	F( 760000,	gpll0,	10,	1,	79),
+	F( 960000,	xo,	10,	1,	2),
+	F( 4800000,	xo,	4,	0,	0),
+	F( 9600000,	xo,	2,	0,	0),
+	F( 16000000,	gpll0,	10,	1,	5),
+	F( 19200000,	xo,	1,	0,	0),
+	F( 25000000,	gpll0,	16,	1,	2),
+	F( 50000000,	gpll0,	16,	0,	0),
+	F_END
+};
+
 static struct rcg_clk blsp2_qup2_spi_apps_clk_src = {
 	.cmd_rcgr_reg =  BLSP2_QUP2_SPI_APPS_CMD_RCGR,
 	.set_rate = set_rate_mnd,
-	.freq_tbl = ftbl_gcc_blsp1_2_qup1_4_spi_apps_clk,
+	.freq_tbl = ftbl_gcc_blsp2_qup2_spi_apps_clk,
 	.current_freq = &rcg_dummy_freq,
 	.base = &virt_bases[GCC_BASE],
 	.c = {
