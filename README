@@ -11,7 +11,7 @@ This is the fork of the LG kernel tree for the **LG G Pad X 8.0 (V521)**
 What is different on lineage-15.1-v521
 --------------------------------------
 
-  8ed4186f  v521: add the 64 bit get_user path and drop the 32 bit binder
+  55a07099  v521: add the 64 bit get_user path and drop the 32 bit binder
             API
 
 The 32-bit userspace of this device talks to the 64-bit kernel through the
